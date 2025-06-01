@@ -19,10 +19,7 @@ else:
 df['ID'] = df['ID'].astype(str)
 
 # Recode class variable: Patient=0, Healthy=1
-if 'class' in df.columns:
-    df['class'] = df['class'].map({'Patient': 0, 'Healthy': 1})
-    print("\nClass variable recoded - Patient:0, Healthy:1")
-    print(df['class'].value_counts())
+df['class'] = df['class'].map({'P': 0, 'H': 1})
 
 # Check for extreme values in time variables
 time_cols = [col for col in df.columns if 'time' in col.lower()]
