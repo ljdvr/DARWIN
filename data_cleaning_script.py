@@ -1,6 +1,5 @@
 import pandas as pd
 import numpy as np
-from functools import reduce
 
 # Load the data
 df = pd.read_csv('data.csv')
@@ -18,38 +17,58 @@ else:
 # Convert ID to string if not already
 df['ID'] = df['ID'].astype(str)
 
-# Recode class variable: Patient=0, Healthy=1
-if 'class' in df.columns:
-    df['class'] = df['class'].map({'Patient': 0, 'Healthy': 1})
-    print("\nClass variable recoded - Patient:0, Healthy:1")
-    print(df['class'].value_counts())
-
-# Remove outliers using IQR method for numeric columns
-def remove_outliers(df, columns):
-    clean_df = df.copy()
-    for col in columns:
-        Q1 = clean_df[col].quantile(0.25)
-        Q3 = clean_df[col].quantile(0.75)
-        IQR = Q3 - Q1
-        lower_bound = Q1 - 1.5 * IQR
-        upper_bound = Q3 + 1.5 * IQR
-        clean_df = clean_df[(clean_df[col] >= lower_bound) & (clean_df[col] <= upper_bound)]
-    return clean_df
-
-numeric_cols = df.select_dtypes(include=[np.number]).columns
-numeric_cols = numeric_cols.drop('class') if 'class' in numeric_cols else numeric_cols
-df_clean = remove_outliers(df, numeric_cols)
-print(f"\nOutliers removed. Rows before: {df.shape[0]}, after: {df_clean.shape[0]}")
-
 # Check for extreme values in time variables
-time_cols = [col for col in df_clean.columns if 'time' in col.lower()]
+time_cols = [col for col in df.columns if 'time' in col.lower()]
 print("\nTime variable statistics:")
-print(df_clean[time_cols].describe())
+print(df[time_cols].describe())
 
 # Check for negative values in measurements (shouldn't exist)
-negative_check = (df_clean[numeric_cols] < 0).any()
+numeric_cols = df.select_dtypes(include=[np.number]).columns
+negative_check = (df[numeric_cols] < 0).any()
 print("\nColumns with negative values:")
 print(negative_check[negative_check])
 
+# If we want to reshape the data from wide to long format for analysis:
+# This would integrate all the trial data into a more analysis-friendly format
+
+# First, identify the metric prefixes
+metric_prefixes = set()
+for col in df.columns:
+    if col not in ['ID', 'class']:
+        # Split by numbers to get the base metric name
+        base_name = ''.join([c for c in col if not c.isdigit()])
+        metric_prefixes.add(base_name)
+
+# Create a list of all trial numbers present in the data
+trial_numbers = set()
+for col in df.columns:
+    if any(char.isdigit() for char in col):
+        trial_num = ''.join([c for c in col if c.isdigit()])
+        trial_numbers.add(trial_num)
+trial_numbers = sorted(trial_numbers)
+
+# Melt the dataframe into long format
+long_dfs = []
+for metric in metric_prefixes:
+    # Get all columns for this metric across all trials
+    cols = [col for col in df.columns if col.startswith(metric)]
+    temp_df = df.melt(id_vars=['ID', 'class'], 
+                     value_vars=cols,
+                     var_name='trial_metric',
+                     value_name=metric)
+    
+    # Extract trial number
+    temp_df['trial'] = temp_df['trial_metric'].str.extract('(\d+)')
+    temp_df.drop('trial_metric', axis=1, inplace=True)
+    
+    long_dfs.append(temp_df)
+
+# Merge all long format dataframes
+from functools import reduce
+final_long_df = reduce(lambda left, right: pd.merge(left, right, on=['ID', 'class', 'trial']), long_dfs)
+
+print("\nLong format data shape:", final_long_df.shape)
+
 # Save cleaned data
-df_clean.to_csv('DARWIN_cleaned.csv', index=False)
+df.to_csv('DARWIN_cleaned.csv', index=False)
+final_long_df.to_csv('DARWIN_long_format.csv', index=False)
