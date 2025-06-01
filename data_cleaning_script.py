@@ -1,5 +1,9 @@
 import pandas as pd
 import numpy as np
+from functools import reduce
+from sklearn.cluster import KMeans
+from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
 
 # Load the data
 df = pd.read_csv('data.csv')
@@ -28,18 +32,59 @@ negative_check = (df[numeric_cols] < 0).any()
 print("\nColumns with negative values:")
 print(negative_check[negative_check])
 
-# If we want to reshape the data from wide to long format for analysis:
-# This would integrate all the trial data into a more analysis-friendly format
+# Drop rows with missing values
+df = df.dropna()
 
-# First, identify the metric prefixes
+# ----------------------------------------
+# Data Transformation: Normalization
+# ----------------------------------------
+numeric_df = df.select_dtypes(include=[np.number]).drop(columns=['class'], errors='ignore')
+scaler = StandardScaler()
+normalized_data = scaler.fit_transform(numeric_df)
+normalized_df = pd.DataFrame(normalized_data, columns=numeric_df.columns)
+
+# ----------------------------------------
+# Dimensionality Reduction + Compression: PCA
+# ----------------------------------------
+pca = PCA(n_components=2)
+pca_result = pca.fit_transform(normalized_data)
+df['PCA1'] = pca_result[:, 0]
+df['PCA2'] = pca_result[:, 1]
+print("\nPCA explained variance ratio:", pca.explained_variance_ratio_)
+
+# ----------------------------------------
+# Numerosity Reduction: KMeans Clustering
+# ----------------------------------------
+kmeans = KMeans(n_clusters=5, random_state=42)
+df['cluster'] = kmeans.fit_predict(normalized_data)
+print("\nCluster value counts:\n", df['cluster'].value_counts())
+
+# ----------------------------------------
+# Data Discretization: Binning
+# ----------------------------------------
+discretized_df = normalized_df.copy()
+for col in discretized_df.columns:
+    discretized_df[col + '_bin'] = pd.cut(discretized_df[col], bins=3, labels=['Low', 'Medium', 'High'])
+
+# ----------------------------------------
+# Concept Hierarchy Generation
+# ----------------------------------------
+concept_hierarchy = {
+    0: 'Not Naturalized',
+    1: 'Naturalized'
+}
+if 'class' in df.columns:
+    df['class_hierarchy'] = df['class'].map(concept_hierarchy)
+
+# ----------------------------------------
+# Optional: Reshape from wide to long format
+# ----------------------------------------
 metric_prefixes = set()
 for col in df.columns:
-    if col not in ['ID', 'class']:
-        # Split by numbers to get the base metric name
+    if col not in ['ID', 'class', 'cluster', 'PCA1', 'PCA2', 'class_hierarchy']:
         base_name = ''.join([c for c in col if not c.isdigit()])
         metric_prefixes.add(base_name)
 
-# Create a list of all trial numbers present in the data
 trial_numbers = set()
 for col in df.columns:
     if any(char.isdigit() for char in col):
@@ -47,28 +92,26 @@ for col in df.columns:
         trial_numbers.add(trial_num)
 trial_numbers = sorted(trial_numbers)
 
-# Melt the dataframe into long format
 long_dfs = []
 for metric in metric_prefixes:
-    # Get all columns for this metric across all trials
     cols = [col for col in df.columns if col.startswith(metric)]
+    if not cols:
+        continue
     temp_df = df.melt(id_vars=['ID', 'class'], 
-                     value_vars=cols,
-                     var_name='trial_metric',
-                     value_name=metric)
-    
-    # Extract trial number
+                      value_vars=cols,
+                      var_name='trial_metric',
+                      value_name=metric)
     temp_df['trial'] = temp_df['trial_metric'].str.extract('(\d+)')
     temp_df.drop('trial_metric', axis=1, inplace=True)
-    
     long_dfs.append(temp_df)
 
-# Merge all long format dataframes
-from functools import reduce
-final_long_df = reduce(lambda left, right: pd.merge(left, right, on=['ID', 'class', 'trial']), long_dfs)
+if long_dfs:
+    final_long_df = reduce(lambda left, right: pd.merge(left, right, on=['ID', 'class', 'trial']), long_dfs)
+    print("\nLong format data shape:", final_long_df.shape)
+    final_long_df.to_csv('DARWIN_long_format.csv', index=False)
 
-print("\nLong format data shape:", final_long_df.shape)
-
-# Save cleaned data
+# ----------------------------------------
+# Save Preprocessed Outputs
+# ----------------------------------------
 df.to_csv('DARWIN_cleaned.csv', index=False)
-final_long_df.to_csv('DARWIN_long_format.csv', index=False)
+discretized_df.to_csv('DARWIN_discretized.csv', index=False)
